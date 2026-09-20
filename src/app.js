@@ -513,6 +513,19 @@
       var sahityaLine = document.createElement('div');
       sahityaLine.className = 'line-sahitya';
 
+      /* Source line numbers, pinned to the left while the passage scrolls. */
+      var lineErrors = messagesByLine();
+      var swaraNo = document.createElement('div');
+      swaraNo.className = 'cell lineno' + (lineErrors[row.swaraLine] ? ' has-error' : '');
+      swaraNo.textContent = String(row.swaraLine + 1);
+      swaraNo.title = 'Swara row — line ' + (row.swaraLine + 1) + ' of the notation';
+      swaraLine.appendChild(swaraNo);
+      var sahityaNo = document.createElement('div');
+      sahityaNo.className = 'cell lineno';
+      sahityaNo.textContent = row.sahityaLine === null ? '' : String(row.sahityaLine + 1);
+      if (row.sahityaLine !== null) sahityaNo.title = 'Sahitya row — line ' + (row.sahityaLine + 1);
+      sahityaLine.appendChild(sahityaNo);
+
       var groups = [];       // sahitya grouping mirroring the columns
       var current = null;
 
@@ -529,7 +542,9 @@
           var gi = globalIndex[e.id];
           var cell = document.createElement('button');
           cell.type = 'button';
-          cell.className = 'cell swara' + (e.insideSpeedGroup ? ' speed' : '') + (e.valid ? '' : ' invalid');
+          cell.className = 'cell swara' + (e.insideSpeedGroup ? ' speed' : '') +
+            (e.valid ? (e.warning ? ' warned' : '') : ' invalid');
+          if (e.error || e.warning) cell.title = (e.error || e.warning) + ' (line ' + (e.sourceLine + 1) + ')';
           if (state.selection.start === gi) cell.classList.add('sel-start');
           if (state.selection.end === gi) cell.classList.add('sel-end');
           if (loop && gi >= loop.a && gi <= loop.b) cell.classList.add('in-loop');
@@ -540,7 +555,8 @@
           if (e.insideSpeedGroup) cell.style.fontSize = '0.92rem';
           cell.setAttribute('aria-label',
             'Swara ' + e.resolvedSwara + (e.octave ? (e.octave > 0 ? ' upper octave' : ' lower octave') : '') +
-            ', ' + e.durationInSpaces + ' note-spaces' + (e.sahitya ? ', syllable ' + e.sahitya : '') + '. Tap to play from here.');
+            ', ' + e.durationInSpaces + ' note-spaces' + (e.sahitya ? ', syllable ' + e.sahitya : '') +
+            (e.error ? '. Error: ' + e.error : '') + '. Line ' + (e.sourceLine + 1) + '. Tap to play from here.');
           swaraLine.appendChild(cell);
           if (tokenByEvent[e.id]) current = tokenByEvent[e.id];
         }
@@ -574,15 +590,109 @@
     });
   }
 
+  /* ------------------------------------------------- editor gutter + marks */
+  function messagesByLine() {
+    var byLine = {};
+    function add(m, kind) {
+      if (!byLine[m.line]) byLine[m.line] = [];
+      byLine[m.line].push({
+        column: m.column,
+        endColumn: m.endColumn || m.column + 1,
+        message: m.message,
+        kind: kind
+      });
+    }
+    if (parsed) {
+      parsed.errors.forEach(function (m) { add(m, 'err'); });
+      parsed.warnings.forEach(function (m) { add(m, 'warn'); });
+    }
+    Object.keys(byLine).forEach(function (k) {
+      byLine[k].sort(function (a, b) { return a.column - b.column; });
+    });
+    return byLine;
+  }
+
+  function renderEditorDecorations() {
+    var lines = state.source.split('\n');
+    var byLine = messagesByLine();
+
+    // line numbers, marked where the parser found something
+    var gutter = $('editorGutter');
+    gutter.innerHTML = '';
+    lines.forEach(function (text, i) {
+      var b = document.createElement('b');
+      b.textContent = String(i + 1);
+      var ms = byLine[i];
+      if (ms) {
+        b.className = ms.some(function (m) { return m.kind === 'err'; }) ? 'has-error' : 'has-warning';
+        b.title = ms.map(function (m) { return m.message; }).join('\n');
+      }
+      b.addEventListener('click', function () { selectRange(i, 0, text.length); });
+      gutter.appendChild(b);
+    });
+
+    // shaded ranges under the text
+    var html = lines.map(function (text, i) {
+      var ms = byLine[i];
+      if (!ms || !ms.length) return escapeHtml(text);
+      var out = '', cursor = 0;
+      ms.forEach(function (m) {
+        var from = Math.max(m.column, cursor);
+        var to = Math.max(m.endColumn, from + 1);
+        if (from < cursor) return;
+        out += escapeHtml(text.slice(cursor, from));
+        var slice = text.slice(from, to);
+        if (!slice) slice = ' ';                       // mark past the end of the line
+        out += '<mark class="' + m.kind + '">' + escapeHtml(slice) + '</mark>';
+        cursor = from + slice.length;
+      });
+      out += escapeHtml(text.slice(cursor));
+      return out;
+    }).join('\n');
+    $('editorHighlight').innerHTML = html + '\n';
+    syncEditorScroll();
+  }
+
+  function syncEditorScroll() {
+    var ta = $('editor');
+    $('editorHighlight').scrollTop = ta.scrollTop;
+    $('editorHighlight').scrollLeft = ta.scrollLeft;
+    $('editorGutter').scrollTop = ta.scrollTop;
+  }
+
+  function offsetOf(line, column) {
+    var lines = state.source.split('\n');
+    var at = 0;
+    for (var i = 0; i < line && i < lines.length; i++) at += lines[i].length + 1;
+    return at + Math.min(column, (lines[line] || '').length);
+  }
+
+  /* Put the caret on a problem and show it, from anywhere in the app. */
+  function selectRange(line, column, endColumn) {
+    setTab('edit');
+    var ta = $('editor');
+    var from = offsetOf(line, column);
+    var to = offsetOf(line, endColumn === undefined ? column + 1 : endColumn);
+    ta.focus();
+    try { ta.setSelectionRange(from, to); } catch (e) {}
+    // bring the line into view: scroll by line height
+    var lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 26;
+    var target = Math.max(0, (line * lineHeight) - ta.clientHeight / 2);
+    ta.scrollTop = target;
+    syncEditorScroll();
+  }
+
   function renderMessages() {
     var items = [];
+    function locator(m, kind) {
+      return '<li class="' + kind + ' clickable" role="button" tabindex="0" data-line="' + m.line +
+        '" data-col="' + m.column + '" data-end="' + (m.endColumn || m.column + 1) + '" ' +
+        'title="Go to this line"><span class="pos">line ' + (m.line + 1) + ', col ' + (m.column + 1) +
+        '</span> — ' + escapeHtml(m.message) + '</li>';
+    }
     if (parsed) {
-      parsed.errors.forEach(function (e) {
-        items.push('<li class="err"><span class="pos">line ' + (e.line + 1) + ', col ' + (e.column + 1) + '</span> — ' + escapeHtml(e.message) + '</li>');
-      });
-      parsed.warnings.forEach(function (w) {
-        items.push('<li class="warn"><span class="pos">line ' + (w.line + 1) + ', col ' + (w.column + 1) + '</span> — ' + escapeHtml(w.message) + '</li>');
-      });
+      parsed.errors.forEach(function (e) { items.push(locator(e, 'err')); });
+      parsed.warnings.forEach(function (w) { items.push(locator(w, 'warn')); });
       if (timingInfo && timingInfo.cycleRemainder > 1e-9 && state.loopMode !== 'off') {
         items.push('<li class="warn">The notation is ' + parsed.totalSpaces + ' note-spaces, which does not divide evenly into cycles of ' +
           timingInfo.spacesPerCycle + '. Looping will start the next cycle mid-avarta.</li>');
@@ -604,7 +714,22 @@
     $('editMessages').innerHTML = html;
     var ig = document.querySelectorAll('#btnIgnore');
     for (var i = 0; i < ig.length; i++) {
-      ig[i].addEventListener('click', function () { state.ignoreErrors = !state.ignoreErrors; rebuild(); });
+      ig[i].addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        state.ignoreErrors = !state.ignoreErrors;
+        rebuild();
+      });
+    }
+    var jump = document.querySelectorAll('ul.messages li.clickable');
+    for (var j = 0; j < jump.length; j++) {
+      var go = function (ev) {
+        var li = ev.currentTarget;
+        selectRange(parseInt(li.dataset.line, 10), parseInt(li.dataset.col, 10), parseInt(li.dataset.end, 10));
+      };
+      jump[j].addEventListener('click', go);
+      jump[j].addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(ev); }
+      });
     }
   }
 
@@ -633,11 +758,15 @@
         state.roleOverrides[line.index] = sel.value;
         rebuild();
       });
+      var no = document.createElement('div');
+      no.className = 'review-line';
+      no.textContent = String(line.index + 1);
       var pre = document.createElement('div');
       pre.className = 'plain-line';
       pre.style.flex = '1 1 auto';
       pre.style.overflowX = 'auto';
       pre.textContent = line.text;
+      wrapEl.appendChild(no);
       wrapEl.appendChild(sel);
       wrapEl.appendChild(pre);
       host.appendChild(wrapEl);
@@ -664,6 +793,7 @@
     if (parsed.title && !state.titleTouched) { state.title = parsed.title; $('songTitle').value = parsed.title; }
     renderScore();
     renderMessages();
+    renderEditorDecorations();
     renderReview();
     updateReadout(null);
     saveLocal();
@@ -957,9 +1087,12 @@
     $('editor').addEventListener('input', function () {
       state.source = this.value;
       state.roleOverrides = {};
+      renderEditorDecorations();          // keep the gutter in step with typing
       clearTimeout(editTimer);
       editTimer = setTimeout(rebuild, 180);
     });
+    $('editor').addEventListener('scroll', syncEditorScroll);
+    window.addEventListener('resize', syncEditorScroll);
 
     $('btnSample').addEventListener('click', function () {
       state.source = SAMPLE; state.raga = 'Hindolam'; state.talaPreset = 'Rupaka (3)';
@@ -1146,6 +1279,12 @@
       }
       if (!swara) return;
       var idx = parseInt(swara.dataset.index, 10);
+      var target = parsed.events[idx];
+      if (target && !target.valid && linkPick === null && !ev.shiftKey) {
+        // an unplayable swara: take the user to it in the editor instead
+        selectRange(target.sourceLine, target.sourceStartColumn, target.sourceEndColumn);
+        return;
+      }
 
       if (linkPick !== null) {
         state.sahityaLinks[linkPick] = parsed.events[idx].id;

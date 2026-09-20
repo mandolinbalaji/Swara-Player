@@ -114,12 +114,48 @@ p.note { color: var(--ink-soft); font-size: 0.9rem; margin: 6px 0 12px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
 .card + .card { margin-top: 12px; }
 
-textarea#editor {
-  width: 100%; min-height: 320px; font-family: var(--mono); font-size: 15px; line-height: 1.7;
-  padding: 12px; border: 1px solid var(--line); border-radius: var(--radius);
-  background: var(--surface); color: var(--ink); white-space: pre; overflow-wrap: normal; overflow-x: auto;
-  tab-size: 8;
+/* ---- notation editor: gutter + highlight layer + textarea ---- */
+/* The gutter and highlight layer are positioned, so only the textarea decides
+   the editor's height — otherwise a long song stretches the whole shell. */
+.editor-shell {
+  position: relative;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); overflow: hidden;
 }
+.editor-gutter {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 52px;
+  padding: 12px 8px 12px 6px;
+  background: var(--surface-2); border-right: 1px solid var(--line);
+  overflow: hidden; user-select: none; text-align: right;
+}
+.editor-gutter b {
+  display: block; font-family: var(--mono); font-size: 15px; line-height: 1.7;
+  font-weight: 400; color: var(--ink-soft); white-space: pre; cursor: pointer;
+}
+.editor-gutter b.has-error { color: var(--err); font-weight: 700; }
+.editor-gutter b.has-warning { color: var(--warn); font-weight: 700; }
+.editor-area { position: relative; margin-left: 52px; min-width: 0; }
+.editor-highlight, textarea#editor {
+  font-family: var(--mono); font-size: 15px; line-height: 1.7; tab-size: 8;
+  padding: 12px; margin: 0; border: 0; white-space: pre; overflow-wrap: normal;
+  letter-spacing: normal; word-spacing: normal;
+}
+.editor-highlight {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+  color: transparent; background: transparent;
+}
+.editor-highlight mark {
+  color: transparent; border-radius: 3px; padding: 1px 0;
+}
+.editor-highlight mark.err { background: var(--err-soft); box-shadow: 0 0 0 1.5px var(--err); }
+.editor-highlight mark.warn { background: var(--warn-soft); box-shadow: 0 0 0 1.5px var(--warn); }
+textarea#editor {
+  position: relative; display: block; width: 100%; min-height: 340px;
+  background: transparent; color: var(--ink); caret-color: var(--accent);
+  overflow: auto; resize: vertical;
+}
+textarea#editor:focus-visible { outline: 3px solid var(--accent-2); outline-offset: -3px; }
+.review-line { font-family: var(--mono); font-size: 0.82rem; color: var(--ink-soft); min-width: 30px; text-align: right; }
 
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 .field { display: flex; flex-direction: column; gap: 6px; }
@@ -155,7 +191,19 @@ textarea#editor {
 .cell.swara.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .cell.sahitya.active { background: var(--accent-soft); color: var(--ink); border-color: var(--accent); font-weight: 600; }
 .cell.swara.active::after { content: "\25B6"; font-size: 0.5rem; margin-left: 4px; }
-.cell.swara.invalid { color: var(--err); text-decoration: underline wavy var(--err); }
+.cell.swara.invalid {
+  color: var(--err); text-decoration: underline wavy var(--err);
+  background: var(--err-soft); border-color: var(--err);
+}
+.cell.swara.warned { text-decoration: underline dotted var(--warn); }
+.cell.lineno {
+  position: sticky; left: 0; z-index: 2; width: 34px; flex: 0 0 34px;
+  background: var(--surface); color: var(--ink-soft); font-size: 0.72rem;
+  border-right: 1px solid var(--line); justify-content: flex-end; padding-right: 6px;
+}
+.cell.lineno.has-error { color: var(--err); font-weight: 700; }
+ul.messages li.clickable { cursor: pointer; }
+ul.messages li.clickable:hover { filter: brightness(0.97); }
 .cell.swara.sel-start { box-shadow: inset 3px 0 0 var(--accent-2); }
 .cell.swara.sel-end { box-shadow: inset -3px 0 0 var(--accent-2); }
 .cell.swara.in-loop { background: var(--accent-2-soft); }
@@ -273,7 +321,16 @@ kbd { font-family: var(--mono); font-size: 0.8rem; background: var(--surface-2);
   <section class="panel" id="panel-edit" role="tabpanel" aria-labelledby="tab-edit" hidden>
     <div class="card">
       <label for="editor" style="font-weight:600">Raw notation (spacing, commas, brackets and dots are preserved exactly)</label>
-      <textarea id="editor" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+      <p class="note" id="editorStatus">Line numbers run down the left. Anything the parser cannot read in a swara row is
+        shaded here and listed below with its line and column.</p>
+      <div class="editor-shell">
+        <div class="editor-gutter" id="editorGutter" aria-hidden="true"></div>
+        <div class="editor-area">
+          <div class="editor-highlight" id="editorHighlight" aria-hidden="true"></div>
+          <textarea id="editor" spellcheck="false" autocapitalize="off" autocorrect="off"
+                    aria-describedby="editorStatus"></textarea>
+        </div>
+      </div>
       <div class="row" style="margin-top:10px">
         <button class="btn small" id="btnSample" type="button">Load Hindolam sample</button>
         <button class="btn small" id="btnClear" type="button">Clear</button>
@@ -753,9 +810,15 @@ go      vard    dha na      gi    ri</div>
     var speedGroupId = null;
     var groupCounter = state.groupCounter;
 
-    function pushError(col, message, severity) {
+    /* Every message carries the exact character range it covers, so the editor
+       can highlight the offending text rather than just naming a line. */
+    function pushError(col, message, severity, endCol) {
       (severity === 'warning' ? warnings : errors).push({
-        line: lineIndex, column: col, message: message, severity: severity || 'error'
+        line: lineIndex,
+        column: col,
+        endColumn: (typeof endCol === 'number' && endCol > col) ? endCol : col + 1,
+        message: message,
+        severity: severity || 'error'
       });
     }
 
@@ -835,7 +898,25 @@ go      vard    dha na      gi    ri</div>
       }
 
       if (!isSwaraLetter(info.base)) {
-        pushError(i, 'Unexpected character "' + ch + '" in a swara row.');
+        /* A stray word in a swara row — usually a sahitya line that was not
+           marked as one — is reported once, over the whole word, rather than
+           once per character. */
+        if (/[\p{L}]/u.test(info.base)) {
+          var wordStart = i;
+          while (i < text.length) {
+            var wc = analyseChar(text.charAt(i));
+            if (/[\p{L}\p{N}]/u.test(wc.base) || isCombining(text.charAt(i))) i++;
+            else break;
+          }
+          var word = text.slice(wordStart, i);
+          pushError(wordStart,
+            '"' + word + '" is not a swara. Swara rows use S R G M P D N with optional variant numbers — ' +
+            'if this is lyric text, mark the row as sahitya.',
+            'error', i);
+          continue;
+        }
+        pushError(i, 'Unexpected character "' + ch + '" in a swara row. ' +
+          'Swara rows take S R G M P D N, commas, square brackets and bar lines.', 'error', i + 1);
         i++;
         continue;
       }
@@ -870,8 +951,29 @@ go      vard    dha na      gi    ri</div>
         i++;
       }
 
+      /* A swara letter glued to a non-swara letter is a word, not notation:
+         "govardhana" in a swara row is reported once, over the whole word. */
+      if (i < text.length) {
+        var nextInfo2 = analyseChar(text.charAt(i));
+        if (/[\p{L}]/u.test(nextInfo2.base) && !isSwaraLetter(nextInfo2.base)) {
+          var wStart = startCol;
+          while (i < text.length) {
+            var wc2 = analyseChar(text.charAt(i));
+            if (/[\p{L}\p{N}]/u.test(wc2.base) || isCombining(text.charAt(i))) i++;
+            else break;
+          }
+          pushError(wStart,
+            '"' + text.slice(wStart, i) + '" is not a swara. Swara rows use S R G M P D N with optional variant ' +
+            'numbers — if this is lyric text, mark the row as sahitya.',
+            'error', i);
+          continue;
+        }
+      }
+
+      var tokenEnd = i;
       if (above && below) {
-        pushError(startCol, 'Ambiguous octave mark on "' + letter + '" — it has both an upper and a lower mark.');
+        pushError(startCol, 'Ambiguous octave mark on "' + letter + '" — it has both an upper and a lower mark.',
+          'error', tokenEnd);
       }
 
       var octave = 0;
@@ -879,8 +981,8 @@ go      vard    dha na      gi    ri</div>
       else if (below) octave = below === 'double' ? -2 : -1;
 
       var resolved = resolveSwara(letter, digit, ctx);
-      if (resolved.error) pushError(startCol, resolved.error);
-      if (resolved.warning) pushError(startCol, resolved.warning, 'warning');
+      if (resolved.error) pushError(startCol, resolved.error, 'error', tokenEnd);
+      if (resolved.warning) pushError(startCol, resolved.warning, 'warning', tokenEnd);
 
       var inGroup = speedGroupOpenAt !== -1;
       var duration = inGroup ? 0.5 : 1;
@@ -891,6 +993,8 @@ go      vard    dha na      gi    ri</div>
         resolvedSwara: resolved.name || (letter + digit),
         semitone: resolved.semitone !== undefined ? resolved.semitone : null,
         valid: !resolved.error,
+        error: resolved.error || null,
+        warning: resolved.warning || null,
         octave: octave,
         durationInSpaces: duration,
         commaCount: 0,
@@ -1702,6 +1806,19 @@ go      vard    dha na      gi    ri</div>
       var sahityaLine = document.createElement('div');
       sahityaLine.className = 'line-sahitya';
 
+      /* Source line numbers, pinned to the left while the passage scrolls. */
+      var lineErrors = messagesByLine();
+      var swaraNo = document.createElement('div');
+      swaraNo.className = 'cell lineno' + (lineErrors[row.swaraLine] ? ' has-error' : '');
+      swaraNo.textContent = String(row.swaraLine + 1);
+      swaraNo.title = 'Swara row — line ' + (row.swaraLine + 1) + ' of the notation';
+      swaraLine.appendChild(swaraNo);
+      var sahityaNo = document.createElement('div');
+      sahityaNo.className = 'cell lineno';
+      sahityaNo.textContent = row.sahityaLine === null ? '' : String(row.sahityaLine + 1);
+      if (row.sahityaLine !== null) sahityaNo.title = 'Sahitya row — line ' + (row.sahityaLine + 1);
+      sahityaLine.appendChild(sahityaNo);
+
       var groups = [];       // sahitya grouping mirroring the columns
       var current = null;
 
@@ -1718,7 +1835,9 @@ go      vard    dha na      gi    ri</div>
           var gi = globalIndex[e.id];
           var cell = document.createElement('button');
           cell.type = 'button';
-          cell.className = 'cell swara' + (e.insideSpeedGroup ? ' speed' : '') + (e.valid ? '' : ' invalid');
+          cell.className = 'cell swara' + (e.insideSpeedGroup ? ' speed' : '') +
+            (e.valid ? (e.warning ? ' warned' : '') : ' invalid');
+          if (e.error || e.warning) cell.title = (e.error || e.warning) + ' (line ' + (e.sourceLine + 1) + ')';
           if (state.selection.start === gi) cell.classList.add('sel-start');
           if (state.selection.end === gi) cell.classList.add('sel-end');
           if (loop && gi >= loop.a && gi <= loop.b) cell.classList.add('in-loop');
@@ -1729,7 +1848,8 @@ go      vard    dha na      gi    ri</div>
           if (e.insideSpeedGroup) cell.style.fontSize = '0.92rem';
           cell.setAttribute('aria-label',
             'Swara ' + e.resolvedSwara + (e.octave ? (e.octave > 0 ? ' upper octave' : ' lower octave') : '') +
-            ', ' + e.durationInSpaces + ' note-spaces' + (e.sahitya ? ', syllable ' + e.sahitya : '') + '. Tap to play from here.');
+            ', ' + e.durationInSpaces + ' note-spaces' + (e.sahitya ? ', syllable ' + e.sahitya : '') +
+            (e.error ? '. Error: ' + e.error : '') + '. Line ' + (e.sourceLine + 1) + '. Tap to play from here.');
           swaraLine.appendChild(cell);
           if (tokenByEvent[e.id]) current = tokenByEvent[e.id];
         }
@@ -1763,15 +1883,109 @@ go      vard    dha na      gi    ri</div>
     });
   }
 
+  /* ------------------------------------------------- editor gutter + marks */
+  function messagesByLine() {
+    var byLine = {};
+    function add(m, kind) {
+      if (!byLine[m.line]) byLine[m.line] = [];
+      byLine[m.line].push({
+        column: m.column,
+        endColumn: m.endColumn || m.column + 1,
+        message: m.message,
+        kind: kind
+      });
+    }
+    if (parsed) {
+      parsed.errors.forEach(function (m) { add(m, 'err'); });
+      parsed.warnings.forEach(function (m) { add(m, 'warn'); });
+    }
+    Object.keys(byLine).forEach(function (k) {
+      byLine[k].sort(function (a, b) { return a.column - b.column; });
+    });
+    return byLine;
+  }
+
+  function renderEditorDecorations() {
+    var lines = state.source.split('\n');
+    var byLine = messagesByLine();
+
+    // line numbers, marked where the parser found something
+    var gutter = $('editorGutter');
+    gutter.innerHTML = '';
+    lines.forEach(function (text, i) {
+      var b = document.createElement('b');
+      b.textContent = String(i + 1);
+      var ms = byLine[i];
+      if (ms) {
+        b.className = ms.some(function (m) { return m.kind === 'err'; }) ? 'has-error' : 'has-warning';
+        b.title = ms.map(function (m) { return m.message; }).join('\n');
+      }
+      b.addEventListener('click', function () { selectRange(i, 0, text.length); });
+      gutter.appendChild(b);
+    });
+
+    // shaded ranges under the text
+    var html = lines.map(function (text, i) {
+      var ms = byLine[i];
+      if (!ms || !ms.length) return escapeHtml(text);
+      var out = '', cursor = 0;
+      ms.forEach(function (m) {
+        var from = Math.max(m.column, cursor);
+        var to = Math.max(m.endColumn, from + 1);
+        if (from < cursor) return;
+        out += escapeHtml(text.slice(cursor, from));
+        var slice = text.slice(from, to);
+        if (!slice) slice = ' ';                       // mark past the end of the line
+        out += '<mark class="' + m.kind + '">' + escapeHtml(slice) + '</mark>';
+        cursor = from + slice.length;
+      });
+      out += escapeHtml(text.slice(cursor));
+      return out;
+    }).join('\n');
+    $('editorHighlight').innerHTML = html + '\n';
+    syncEditorScroll();
+  }
+
+  function syncEditorScroll() {
+    var ta = $('editor');
+    $('editorHighlight').scrollTop = ta.scrollTop;
+    $('editorHighlight').scrollLeft = ta.scrollLeft;
+    $('editorGutter').scrollTop = ta.scrollTop;
+  }
+
+  function offsetOf(line, column) {
+    var lines = state.source.split('\n');
+    var at = 0;
+    for (var i = 0; i < line && i < lines.length; i++) at += lines[i].length + 1;
+    return at + Math.min(column, (lines[line] || '').length);
+  }
+
+  /* Put the caret on a problem and show it, from anywhere in the app. */
+  function selectRange(line, column, endColumn) {
+    setTab('edit');
+    var ta = $('editor');
+    var from = offsetOf(line, column);
+    var to = offsetOf(line, endColumn === undefined ? column + 1 : endColumn);
+    ta.focus();
+    try { ta.setSelectionRange(from, to); } catch (e) {}
+    // bring the line into view: scroll by line height
+    var lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 26;
+    var target = Math.max(0, (line * lineHeight) - ta.clientHeight / 2);
+    ta.scrollTop = target;
+    syncEditorScroll();
+  }
+
   function renderMessages() {
     var items = [];
+    function locator(m, kind) {
+      return '<li class="' + kind + ' clickable" role="button" tabindex="0" data-line="' + m.line +
+        '" data-col="' + m.column + '" data-end="' + (m.endColumn || m.column + 1) + '" ' +
+        'title="Go to this line"><span class="pos">line ' + (m.line + 1) + ', col ' + (m.column + 1) +
+        '</span> — ' + escapeHtml(m.message) + '</li>';
+    }
     if (parsed) {
-      parsed.errors.forEach(function (e) {
-        items.push('<li class="err"><span class="pos">line ' + (e.line + 1) + ', col ' + (e.column + 1) + '</span> — ' + escapeHtml(e.message) + '</li>');
-      });
-      parsed.warnings.forEach(function (w) {
-        items.push('<li class="warn"><span class="pos">line ' + (w.line + 1) + ', col ' + (w.column + 1) + '</span> — ' + escapeHtml(w.message) + '</li>');
-      });
+      parsed.errors.forEach(function (e) { items.push(locator(e, 'err')); });
+      parsed.warnings.forEach(function (w) { items.push(locator(w, 'warn')); });
       if (timingInfo && timingInfo.cycleRemainder > 1e-9 && state.loopMode !== 'off') {
         items.push('<li class="warn">The notation is ' + parsed.totalSpaces + ' note-spaces, which does not divide evenly into cycles of ' +
           timingInfo.spacesPerCycle + '. Looping will start the next cycle mid-avarta.</li>');
@@ -1793,7 +2007,22 @@ go      vard    dha na      gi    ri</div>
     $('editMessages').innerHTML = html;
     var ig = document.querySelectorAll('#btnIgnore');
     for (var i = 0; i < ig.length; i++) {
-      ig[i].addEventListener('click', function () { state.ignoreErrors = !state.ignoreErrors; rebuild(); });
+      ig[i].addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        state.ignoreErrors = !state.ignoreErrors;
+        rebuild();
+      });
+    }
+    var jump = document.querySelectorAll('ul.messages li.clickable');
+    for (var j = 0; j < jump.length; j++) {
+      var go = function (ev) {
+        var li = ev.currentTarget;
+        selectRange(parseInt(li.dataset.line, 10), parseInt(li.dataset.col, 10), parseInt(li.dataset.end, 10));
+      };
+      jump[j].addEventListener('click', go);
+      jump[j].addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(ev); }
+      });
     }
   }
 
@@ -1822,11 +2051,15 @@ go      vard    dha na      gi    ri</div>
         state.roleOverrides[line.index] = sel.value;
         rebuild();
       });
+      var no = document.createElement('div');
+      no.className = 'review-line';
+      no.textContent = String(line.index + 1);
       var pre = document.createElement('div');
       pre.className = 'plain-line';
       pre.style.flex = '1 1 auto';
       pre.style.overflowX = 'auto';
       pre.textContent = line.text;
+      wrapEl.appendChild(no);
       wrapEl.appendChild(sel);
       wrapEl.appendChild(pre);
       host.appendChild(wrapEl);
@@ -1853,6 +2086,7 @@ go      vard    dha na      gi    ri</div>
     if (parsed.title && !state.titleTouched) { state.title = parsed.title; $('songTitle').value = parsed.title; }
     renderScore();
     renderMessages();
+    renderEditorDecorations();
     renderReview();
     updateReadout(null);
     saveLocal();
@@ -2146,9 +2380,12 @@ go      vard    dha na      gi    ri</div>
     $('editor').addEventListener('input', function () {
       state.source = this.value;
       state.roleOverrides = {};
+      renderEditorDecorations();          // keep the gutter in step with typing
       clearTimeout(editTimer);
       editTimer = setTimeout(rebuild, 180);
     });
+    $('editor').addEventListener('scroll', syncEditorScroll);
+    window.addEventListener('resize', syncEditorScroll);
 
     $('btnSample').addEventListener('click', function () {
       state.source = SAMPLE; state.raga = 'Hindolam'; state.talaPreset = 'Rupaka (3)';
@@ -2335,6 +2572,12 @@ go      vard    dha na      gi    ri</div>
       }
       if (!swara) return;
       var idx = parseInt(swara.dataset.index, 10);
+      var target = parsed.events[idx];
+      if (target && !target.valid && linkPick === null && !ev.shiftKey) {
+        // an unplayable swara: take the user to it in the editor instead
+        selectRange(target.sourceLine, target.sourceStartColumn, target.sourceEndColumn);
+        return;
+      }
 
       if (linkPick !== null) {
         state.sahityaLinks[linkPick] = parsed.events[idx].id;

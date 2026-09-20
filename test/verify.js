@@ -4,7 +4,7 @@ const path = require('path'); const fs = require('fs');
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const p = await b.newPage({ viewport: { width: 900, height: 800 } });
   const errs = []; p.on('pageerror', e => errs.push(e.message));
-  await p.goto('file://' + path.join(__dirname, 'dist/carnatic-swara-player.html'));
+  await p.goto('file://' + path.join(__dirname, '..', 'index.html'));
   await p.waitForTimeout(300);
 
   const original = await p.inputValue('#editor');
@@ -51,7 +51,7 @@ const path = require('path'); const fs = require('fs');
              bg: s && getComputedStyle(s).backgroundColor };
   });
   console.log('active:', JSON.stringify(act));
-  await p.screenshot({ path: 'shots/playing.png' });
+  await p.screenshot({ path: '/tmp/shots-playing.png' });
   await p.click('#btnStop');
 
   // seek by clicking a swara in the third passage

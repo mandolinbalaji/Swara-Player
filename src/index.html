@@ -59,7 +59,16 @@
   <section class="panel" id="panel-edit" role="tabpanel" aria-labelledby="tab-edit" hidden>
     <div class="card">
       <label for="editor" style="font-weight:600">Raw notation (spacing, commas, brackets and dots are preserved exactly)</label>
-      <textarea id="editor" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+      <p class="note" id="editorStatus">Line numbers run down the left. Anything the parser cannot read in a swara row is
+        shaded here and listed below with its line and column.</p>
+      <div class="editor-shell">
+        <div class="editor-gutter" id="editorGutter" aria-hidden="true"></div>
+        <div class="editor-area">
+          <div class="editor-highlight" id="editorHighlight" aria-hidden="true"></div>
+          <textarea id="editor" spellcheck="false" autocapitalize="off" autocorrect="off"
+                    aria-describedby="editorStatus"></textarea>
+        </div>
+      </div>
       <div class="row" style="margin-top:10px">
         <button class="btn small" id="btnSample" type="button">Load Hindolam sample</button>
         <button class="btn small" id="btnClear" type="button">Clear</button>

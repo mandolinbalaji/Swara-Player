@@ -57,6 +57,24 @@ exactly and never rewrites it.
 Imported text without `[SWARA]`/`[SAHITYA]` markers is never played on a guess: the Notation tab
 shows each row with the role it was given, for you to confirm or correct.
 
+## Finding mistakes
+
+The Notation tab numbers every line down the left. A line the parser could not read entirely is
+numbered in red (errors) or amber (warnings), and the offending characters are boxed in place
+under the text, so a stray note is visible where it was typed rather than only described.
+
+Anything in a swara row that is not a swara, a comma, a bracket or a bar line is reported with
+its line and column: `X` alone is named as a character, and a whole word — `govardhana` left in
+a swara row — is reported once, over the word, with a nudge that it probably belongs in the
+sahitya row. A swara the raga does not contain, such as `P` in Hindolam, is reported the same
+way rather than guessed.
+
+Every message in the list is clickable: it opens the Notation tab and selects exactly the
+characters at fault. Clicking a red swara in the Play view does the same, and the formatted
+view carries the source line number beside each row, pinned to the left as the passage scrolls,
+so a message about line 14 is easy to find. Playback stays blocked until the errors are gone,
+unless you choose *Play anyway*, which skips the unreadable swaras and keeps their timing.
+
 ## Ragas
 
 ### Changing a raga's notes in the app
@@ -166,13 +184,13 @@ src/app.js            audio scheduler, rendering, controls
 src/app.css           styling
 engine.js             parser, timing model, raga and pitch resolution, sahitya linking
 build.js              inlines src + engine into index.html
-tests.js              97 engine assertions, runs in Node with no dependencies
+tests.js              122 engine assertions, runs in Node with no dependencies
 test/                 headless-browser checks (Playwright)
 samples/              example notation
 ```
 
 ```
-npm test              engine assertions: durations, raga mapping, brackets, Unicode, round trip
+npm test              engine assertions: durations, raga mapping, brackets, error ranges, Unicode, round trip
 npm run build         rebuild index.html from src/
 npm install && npm run test:browser
                       browser checks: rendering, playback, downloads, raga editor

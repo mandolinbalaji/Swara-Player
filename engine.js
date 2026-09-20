@@ -324,9 +324,15 @@
     var speedGroupId = null;
     var groupCounter = state.groupCounter;
 
-    function pushError(col, message, severity) {
+    /* Every message carries the exact character range it covers, so the editor
+       can highlight the offending text rather than just naming a line. */
+    function pushError(col, message, severity, endCol) {
       (severity === 'warning' ? warnings : errors).push({
-        line: lineIndex, column: col, message: message, severity: severity || 'error'
+        line: lineIndex,
+        column: col,
+        endColumn: (typeof endCol === 'number' && endCol > col) ? endCol : col + 1,
+        message: message,
+        severity: severity || 'error'
       });
     }
 
@@ -406,7 +412,25 @@
       }
 
       if (!isSwaraLetter(info.base)) {
-        pushError(i, 'Unexpected character "' + ch + '" in a swara row.');
+        /* A stray word in a swara row — usually a sahitya line that was not
+           marked as one — is reported once, over the whole word, rather than
+           once per character. */
+        if (/[\p{L}]/u.test(info.base)) {
+          var wordStart = i;
+          while (i < text.length) {
+            var wc = analyseChar(text.charAt(i));
+            if (/[\p{L}\p{N}]/u.test(wc.base) || isCombining(text.charAt(i))) i++;
+            else break;
+          }
+          var word = text.slice(wordStart, i);
+          pushError(wordStart,
+            '"' + word + '" is not a swara. Swara rows use S R G M P D N with optional variant numbers — ' +
+            'if this is lyric text, mark the row as sahitya.',
+            'error', i);
+          continue;
+        }
+        pushError(i, 'Unexpected character "' + ch + '" in a swara row. ' +
+          'Swara rows take S R G M P D N, commas, square brackets and bar lines.', 'error', i + 1);
         i++;
         continue;
       }
@@ -441,8 +465,29 @@
         i++;
       }
 
+      /* A swara letter glued to a non-swara letter is a word, not notation:
+         "govardhana" in a swara row is reported once, over the whole word. */
+      if (i < text.length) {
+        var nextInfo2 = analyseChar(text.charAt(i));
+        if (/[\p{L}]/u.test(nextInfo2.base) && !isSwaraLetter(nextInfo2.base)) {
+          var wStart = startCol;
+          while (i < text.length) {
+            var wc2 = analyseChar(text.charAt(i));
+            if (/[\p{L}\p{N}]/u.test(wc2.base) || isCombining(text.charAt(i))) i++;
+            else break;
+          }
+          pushError(wStart,
+            '"' + text.slice(wStart, i) + '" is not a swara. Swara rows use S R G M P D N with optional variant ' +
+            'numbers — if this is lyric text, mark the row as sahitya.',
+            'error', i);
+          continue;
+        }
+      }
+
+      var tokenEnd = i;
       if (above && below) {
-        pushError(startCol, 'Ambiguous octave mark on "' + letter + '" — it has both an upper and a lower mark.');
+        pushError(startCol, 'Ambiguous octave mark on "' + letter + '" — it has both an upper and a lower mark.',
+          'error', tokenEnd);
       }
 
       var octave = 0;
@@ -450,8 +495,8 @@
       else if (below) octave = below === 'double' ? -2 : -1;
 
       var resolved = resolveSwara(letter, digit, ctx);
-      if (resolved.error) pushError(startCol, resolved.error);
-      if (resolved.warning) pushError(startCol, resolved.warning, 'warning');
+      if (resolved.error) pushError(startCol, resolved.error, 'error', tokenEnd);
+      if (resolved.warning) pushError(startCol, resolved.warning, 'warning', tokenEnd);
 
       var inGroup = speedGroupOpenAt !== -1;
       var duration = inGroup ? 0.5 : 1;
@@ -462,6 +507,8 @@
         resolvedSwara: resolved.name || (letter + digit),
         semitone: resolved.semitone !== undefined ? resolved.semitone : null,
         valid: !resolved.error,
+        error: resolved.error || null,
+        warning: resolved.warning || null,
         octave: octave,
         durationInSpaces: duration,
         commaCount: 0,

@@ -4,7 +4,7 @@ const path = require('path');
   const b = await chromium.launch();
   const p = await b.newPage({ viewport: { width: 1000, height: 900 } });
   const errs = []; p.on('pageerror', e => errs.push(e.message));
-  await p.goto('file://' + path.join(__dirname, 'dist/carnatic-swara-player.html'));
+  await p.goto('file://' + path.join(__dirname, '..', 'index.html'));
   await p.waitForTimeout(300);
   await p.click('#tab-settings');
   await p.locator('#panel-settings details.adv summary').click();

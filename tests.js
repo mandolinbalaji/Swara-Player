@@ -223,5 +223,46 @@ check('frequency follows the edited position',
 eq('custom raga can be removed', E.unregisterRaga('Two Dhaivatas'), true);
 eq('built-in ragas cannot be removed', E.unregisterRaga('Hindolam'), false);
 
+section('Test 11 — unexpected notes are located precisely');
+var t11 = parseSwaras('G M X D');
+eq('one error', t11.errors.length, 1);
+eq('error line', t11.errors[0].line, 1);
+eq('error starts at the stray character', t11.errors[0].column, 4);
+eq('error ends after it', t11.errors[0].endColumn, 5);
+check('message names the character', /"X" is not a swara/.test(t11.errors[0].message), t11.errors[0].message);
+
+var t11b = parseSwaras('G M govardhana D');
+eq('a stray word is one error, not ten', t11b.errors.length, 1);
+eq('word error starts at the word', t11b.errors[0].column, 4);
+eq('word error covers the whole word', t11b.errors[0].endColumn, 14);
+check('message suggests the sahitya row', /mark the row as sahitya/.test(t11b.errors[0].message), t11b.errors[0].message);
+
+var t11c = parseSwaras('S R G# M');
+check('a stray symbol is reported', t11c.errors.length >= 1, JSON.stringify(t11c.errors));
+eq('symbol column', t11c.errors[0].column, 5);
+
+section('Test 11b — out-of-raga swaras carry their range and reach the event');
+var t11d = parseSwaras('G M P N', 'Hindolam');
+eq('one error for P', t11d.errors.length, 1);
+eq('P column', t11d.errors[0].column, 4);
+eq('P range is one character', t11d.errors[0].endColumn, 5);
+eq('the P event is marked invalid', t11d.events[2].valid, false);
+check('the event carries the message', /not part of Hindolam/.test(t11d.events[2].error || ''), t11d.events[2].error);
+eq('valid events stay valid', t11d.events[0].valid, true);
+
+var t11e = parseSwaras('G M D3 N', 'Hindolam');
+eq('an explicit out-of-raga variant warns rather than blocks', t11e.errors.length, 0);
+eq('warning range covers D3', t11e.warnings[0].endColumn - t11e.warnings[0].column, 2);
+eq('the event carries the warning', typeof t11e.events[2].warning, 'string');
+
+section('Test 11c — every message has a usable range');
+[parseSwaras('G [M [D N]]'), parseSwaras('G [M D'), parseSwaras('G M] D'), parseSwaras(', G M'), parseSwaras(".N'")]
+  .forEach(function (p, n) {
+    var msgs = p.errors.concat(p.warnings);
+    check('case ' + (n + 1) + ' ranges are well formed', msgs.length > 0 && msgs.every(function (m) {
+      return typeof m.line === 'number' && m.endColumn > m.column;
+    }), JSON.stringify(msgs));
+  });
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

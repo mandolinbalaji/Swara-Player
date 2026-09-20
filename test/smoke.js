@@ -9,7 +9,7 @@ const path = require('path');
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 
-  const file = 'file://' + path.join(__dirname, 'dist/carnatic-swara-player.html');
+  const file = 'file://' + path.join(__dirname, '..', 'index.html');
   await page.goto(file);
   await page.waitForTimeout(400);
 
