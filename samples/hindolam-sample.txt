@@ -1,0 +1,19 @@
+﻿[TITLE: Hindolam Sample]
+[SECTION: Pallavi]
+[SWARA]
+G,,,    | M,,,    | G,   M,   ||
+[SAHITYA]
+go        var       dha  ni
+
+[SECTION: Anupallavi]
+[SWARA]
+S',,,   | N,   D,   | M,   G,   ||
+[SAHITYA]
+ā         nan  da     ku   mā
+
+[SECTION: Chittaswaram]
+[SWARA]
+[G M D N] S',,  | .N   S,   | [S'N D M] G,   ||
+[SAHITYA]
+ā         nan     da           śrī      hā
+
